@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ledger 2PC</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #14171c; --muted: #5d6573; --line: #e3e6eb; --soft: #f0f2f5;
+  --master: #c2386b; --cha: #2f6fdb; --chb: #188a46; --other: #6b7280;
+  --ok: #188a46; --bad: #c62f2f; --warn: #b26b00; --accent: #2f6fdb;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216; --panel: #171b21; --ink: #e7eaee; --muted: #9aa3b1; --line: #2a3039; --soft: #1e232b;
+    --master: #ee6a9b; --cha: #6b9cf2; --chb: #3fbf72; --ok: #3fbf72; --bad: #f06b6b; --warn: #e0a43a; --accent: #6b9cf2;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1216; --panel: #171b21; --ink: #e7eaee; --muted: #9aa3b1; --line: #2a3039; --soft: #1e232b;
+  --master: #ee6a9b; --cha: #6b9cf2; --chb: #3fbf72; --ok: #3fbf72; --bad: #f06b6b; --warn: #e0a43a; --accent: #6b9cf2;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { padding: 20px 24px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+.sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.stats { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.stat { border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; background: var(--soft); font-size: 13px; }
+.stat b { font-variant-numeric: tabular-nums; }
+nav { display: flex; gap: 4px; margin-top: 14px; }
+nav button, .pill-btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 14px;
+  border-radius: 999px; cursor: pointer; font: inherit; font-size: 13px; }
+nav button[aria-selected="true"], .pill-btn[aria-selected="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+main { padding: 20px 24px 60px; max-width: 1400px; margin: 0 auto; }
+.layout { display: grid; grid-template-columns: 260px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 820px) { .layout { grid-template-columns: 1fr; } header, main { padding-left: 16px; padding-right: 16px; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.gtx-list { padding: 6px; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+.gtx-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 10px;
+  border-radius: 8px; cursor: pointer; }
+.gtx-item:hover { background: var(--soft); }
+.gtx-item[aria-selected="true"] { background: var(--soft); outline: 1px solid var(--line); }
+.gtx-item .id { font-family: var(--mono); font-size: 13px; }
+.gtx-item .meta { color: var(--muted); font-size: 12px; }
+.badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; letter-spacing: 0.02em; white-space: nowrap; }
+.b-commit { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.b-abort { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.b-pending { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.ch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ch::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.c-masterchain { color: var(--master); } .c-channela { color: var(--cha); } .c-channelb { color: var(--chb); }
+.section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 8px; }
+.gtx-head { padding: 16px 18px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.gtx-head h2 { margin: 0; font-size: 17px; font-family: var(--mono); }
+.lanes { padding: 14px 18px 6px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+.lanes svg text { font: 11px system-ui, sans-serif; fill: var(--muted); }
+.steps { list-style: none; margin: 0; padding: 6px 0; }
+.step > summary { list-style: none; display: grid; grid-template-columns: 90px 72px 130px 1fr auto; gap: 12px; align-items: center;
+  padding: 9px 18px; cursor: pointer; }
+.step > summary::-webkit-details-marker { display: none; }
+.step > summary:hover { background: var(--soft); }
+.step[open] > summary { background: var(--soft); }
+@media (max-width: 820px) { .step > summary { grid-template-columns: 76px 84px minmax(0, 1fr) auto; gap: 8px; padding: 9px 14px; } .step .hide-sm { display: none; } }
+.phase { font-size: 12px; color: var(--muted); }
+.t { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fn { font-family: var(--mono); font-weight: 600; }
+.what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layout > * { min-width: 0; }
+.desc { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.valid { font-size: 11px; font-weight: 600; }
+.valid.ok { color: var(--ok); } .valid.bad { color: var(--bad); }
+.detail { padding: 6px 18px 18px 18px; display: grid; gap: 14px; }
+.kv { display: grid; grid-template-columns: minmax(120px, max-content) 1fr; gap: 4px 14px; font-size: 13px; }
+.kv .k { color: var(--muted); font-family: var(--mono); font-size: 12px; padding-top: 2px; }
+.kv .v { font-family: var(--mono); font-size: 12px; word-break: break-word; white-space: pre-wrap; }
+.del { color: var(--bad); }
+.kv .v .proof { white-space: normal; }
+.proof { border: 1px dashed var(--accent); border-radius: 10px; padding: 10px 12px; background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.proof .ttl { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.block { margin-bottom: 14px; overflow: hidden; }
+.block-head { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.block-head .n { font-weight: 700; font-size: 15px; }
+.hash { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--soft); color: var(--muted); border: 1px solid var(--line); }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.toolbar label { color: var(--muted); font-size: 13px; display: inline-flex; gap: 6px; align-items: center; margin-left: 8px; }
+.empty { padding: 30px; color: var(--muted); text-align: center; }
+.live { color: var(--ok); font-weight: 600; }
+.live::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+  margin-right: 6px; vertical-align: 1px; animation: pulse 1.6s infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+body.offline .live { color: var(--bad); } body.offline .live::before { background: var(--bad); animation: none; }
+body.offline .live::after { content: " · servidor desconectado"; }
+@media (prefers-reduced-motion: reduce) { .live::before { animation: none; } }
+.theme { position: absolute; top: 18px; right: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ledger 2PC multichain</h1>
+  <div class="sub" id="sub"></div>
+  <div class="stats" id="stats"></div>
+  <nav role="tablist">
+    <button role="tab" data-view="gtx" aria-selected="true">Transações globais</button>
+    <button role="tab" data-view="blocks" aria-selected="false">Blocos por canal</button>
+  </nav>
+  <button class="pill-btn theme" id="theme" title="Alternar tema">◐</button>
+</header>
+<main id="main"></main>
+
+<script>
+let DATA = /*__DATA__*/null;
+const LIVE = /*__LIVE__*/false; // true quando servido por "explorer --serve"
+
+const PHASE = { Begin: "1 · Begin", Prepare: "2 · Prepare", RecordVote: "3 · Voto", Decide: "4 · Decisão",
+  Timeout: "4 · Timeout", Commit: "5 · Commit", Abort: "5 · Abort", RecordCompletion: "6 · Conclusão" };
+const PROOF = { provaSub: "P1", provaDecisao: "P3" };
+const SETUP = new Set(["RegisterChain", "ConfigureCoordinator", "SetBalance", "CreateImovel", "Transfer"]);
+let CHANNELS = [], LANE = {}, TXS = [], GTX = {};
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const parse = s => { try { return JSON.parse(s); } catch { return null; } };
+const pretty = s => { const j = parse(s); return j !== null && typeof j === "object" ? JSON.stringify(j, null, 2) : s; };
+const chTag = c => `<span class="ch c-${esc(c)}">${esc(c)}</span>`;
+const time = iso => new Date(iso).toLocaleTimeString("pt-BR", { hour12: false }) + "." + String(new Date(iso).getMilliseconds()).padStart(3, "0");
+
+// ---- normalização: lista plana de transações com canal/bloco ----------------
+function load(data) {
+  DATA = data;
+  CHANNELS = DATA.canais.map(c => c.nome);
+  LANE = Object.fromEntries(CHANNELS.map((c, i) => [c, i]));
+  TXS = [];
+  for (const c of DATA.canais) for (const b of c.blocos) for (const t of b.txs) {
+    t.canal = c.nome; t.bloco = b.numero;
+    // Toda invocação lê a definição do chaincode em _lifecycle; só interessa nas txs de lifecycle.
+    if (t.chaincode && t.chaincode !== "_lifecycle") t.rwset = (t.rwset || []).filter(r => r.namespace !== "_lifecycle");
+    t.categoria = t.tipo !== "ENDORSER_TRANSACTION" ? "config"
+      : t.chaincode === "_lifecycle" ? "lifecycle"
+      : SETUP.has(t.funcao) ? "setup" : PHASE[t.funcao] ? "2pc" : "consulta";
+    t.gtx = gtxOf(t);
+    TXS.push(t);
+  }
+  GTX = {};
+  for (const t of TXS.filter(t => t.gtx && t.categoria === "2pc").sort((a, b) => a.timestamp.localeCompare(b.timestamp))) {
+    (GTX[t.gtx] ||= []).push(t);
+  }
+  const when = new Date(DATA.geradoEm).toLocaleString("pt-BR");
+  document.getElementById("sub").innerHTML = (LIVE
+      ? `<span class="live">ao vivo</span> atualizado em ${esc(when)}`
+      : `Gerado em ${esc(when)}`) + ` · ${Object.keys(GTX).length} GTX · ${TXS.length} transações`;
+  document.getElementById("stats").innerHTML = DATA.canais.map(c =>
+    `<div class="stat">${chTag(c.nome)} &nbsp;<b>${c.blocos.length}</b> blocos · <b>${c.blocos.reduce((n, b) => n + b.txs.length, 0)}</b> tx</div>`).join("");
+}
+function gtxOf(t) {
+  if (t.evento) { const p = parse(t.evento.payload); if (p && p.gtxId) return p.gtxId; }
+  const r = parse(t.resposta); if (r && r.gtxId) return r.gtxId;
+  const a = (t.args || []).find(a => a.nome === "gtxId"); if (a) return a.valor;
+  if (t.funcao === "Begin") { const i = parse(t.args[0].valor); if (i) return i.gtxId; }
+  return null;
+}
+function decisionOf(steps) {
+  const d = [...steps].reverse().find(s => s.evento && ["Decided", "Completed"].includes(s.evento.nome));
+  const p = d && parse(d.evento.payload);
+  const done = steps.some(s => s.evento && s.evento.nome === "Completed");
+  return { decisao: p ? p.decisao : "PENDING", concluida: done };
+}
+
+// ---- componentes -------------------------------------------------------------
+function badge(dec) {
+  const cls = dec === "COMMIT" ? "b-commit" : dec === "ABORT" ? "b-abort" : "b-pending";
+  return `<span class="badge ${cls}">${esc(dec)}</span>`;
+}
+function describe(t) {
+  if (t.categoria === "config") return "Configuração do canal (bloco gênese)";
+  if (t.categoria === "lifecycle") return "Lifecycle do chaincode";
+  const ev = t.evento ? `evento ${t.evento.nome} ${t.evento.payload}` : "";
+  const w = (t.rwset || []).flatMap(r => r.escritas).map(w => w.chave).join(", ");
+  return esc(ev || (w ? "escreve " + w : ""));
+}
+function proofLabel(t, a) {
+  if (PROOF[a.nome]) return PROOF[a.nome];
+  if (a.nome === "prova") return t.funcao === "RecordVote" ? "P2" : t.funcao === "RecordCompletion" ? "P4" : "prova";
+  return "prova";
+}
+function detail(t) {
+  const out = [];
+  out.push(`<div class="kv">
+    <div class="k">canal / bloco</div><div class="v">${chTag(t.canal)} · bloco #${t.bloco}</div>
+    <div class="k">txId</div><div class="v">${esc(t.txId)}</div>
+    <div class="k">timestamp</div><div class="v">${esc(t.timestamp)}</div>
+    <div class="k">criador</div><div class="v">${esc(t.criador)}</div>
+    ${t.endossantes ? `<div class="k">endossantes</div><div class="v">${t.endossantes.map(esc).join("\n")}</div>` : ""}
+    <div class="k">validação</div><div class="v">${esc(t.validacao)}</div></div>`);
+  if (t.args && t.args.length) {
+    out.push(`<div><p class="section-title">Argumentos · ${esc(t.chaincode)}.${esc(t.funcao)}</p><div class="kv">` +
+      t.args.map(a => a.prova ? `<div class="k">${esc(a.nome)}</div><div class="v">${proofCard(t, a)}</div>`
+        : `<div class="k">${esc(a.nome)}</div><div class="v">${esc(pretty(a.valor))}</div>`).join("") + `</div></div>`);
+  }
+  for (const r of t.rwset || []) {
+    if (r.escritas.length) out.push(`<div><p class="section-title">Escritas · ${esc(r.namespace)}</p><div class="kv">` +
+      r.escritas.map(w => `<div class="k">${esc(w.chave)}</div><div class="v ${w.delete ? "del" : ""}">${w.delete ? "(removida)" : esc(pretty(w.valor))}</div>`).join("") + `</div></div>`);
+    if (r.leituras.length) out.push(`<div><p class="section-title">Leituras · ${esc(r.namespace)}</p><div class="kv">` +
+      r.leituras.map(l => `<div class="k">${esc(l.chave)}</div><div class="v">versão ${esc(l.versao)}</div>`).join("") + `</div></div>`);
+  }
+  if (t.evento) out.push(`<div><p class="section-title">Evento</p><div class="kv"><div class="k">${esc(t.evento.nome)}</div><div class="v">${esc(pretty(t.evento.payload))}</div></div></div>`);
+  if (t.resposta) out.push(`<div><p class="section-title">Resposta do chaincode</p><pre>${esc(pretty(t.resposta))}</pre></div>`);
+  return `<div class="detail">${out.join("")}</div>`;
+}
+function proofCard(t, a) {
+  const p = a.prova;
+  if (p.erro) return `<div class="proof">${esc(p.erro)}</div>`;
+  return `<div class="proof"><div class="ttl">Prova ${proofLabel(t, a)} · ${chTag(p.canal)} ${esc(p.chaincode)}.${esc(p.funcao)}(${esc(p.args.join(", "))})</div>
+    <div class="kv"><div class="k">endossada por</div><div class="v">${p.endossantes.map(esc).join("\n")}</div>
+    <div class="k">resultado</div><div class="v">${esc(pretty(p.resultado))}</div>
+    <div class="k">tamanho</div><div class="v">${esc(a.valor)}</div></div></div>`;
+}
+function row(t, t0) {
+  const off = t0 ? `+${((new Date(t.timestamp) - t0) / 1000).toFixed(2)}s` : time(t.timestamp);
+  const ok = t.validacao === "VALID";
+  return `<li><details class="step" data-tx="${esc(t.canal + ":" + t.txId)}"><summary>
+      <span class="phase">${esc(PHASE[t.funcao] || t.categoria)}</span>
+      <span class="t">${off}</span>
+      <span class="hide-sm">${chTag(t.canal)}</span>
+      <span class="what"><span class="fn">${esc(t.funcao || t.tipo)}</span> <span class="desc">${describe(t)}</span></span>
+      <span class="valid ${ok ? "ok" : "bad"}">${esc(t.validacao)}</span>
+    </summary>${detail(t)}</details></li>`;
+}
+
+// Raias: cada transação é um ponto na raia do seu canal; as provas são setas tracejadas
+// partindo da cadeia que as emitiu.
+function lanes(steps) {
+  const W = 64, H = 46, L = 110, top = 16;
+  const width = L + steps.length * W + 30, height = top + CHANNELS.length * H;
+  const cy = c => top + (LANE[c] ?? 0) * H + H / 2;
+  let s = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Fluxo da GTX entre cadeias">
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker></defs>`;
+  CHANNELS.forEach(c => {
+    s += `<line x1="${L - 6}" x2="${width - 10}" y1="${cy(c)}" y2="${cy(c)}" stroke="var(--line)" stroke-width="2"/>
+          <text x="0" y="${cy(c) + 4}" class="c-${c}" style="fill:currentColor;font-weight:600">${c}</text>`;
+  });
+  steps.forEach((t, i) => {
+    const x = L + i * W + W / 2, y = cy(t.canal);
+    for (const a of t.args || []) if (a.prova && !a.prova.erro && a.prova.canal !== t.canal) {
+      s += `<path d="M${x - W * 0.55},${cy(a.prova.canal)} C${x - W * 0.2},${cy(a.prova.canal)} ${x - W * 0.35},${y} ${x - 8},${y}"
+        fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>`;
+    }
+    const color = t.validacao !== "VALID" ? "var(--bad)" : `var(--${t.canal === "masterchain" ? "master" : t.canal === "channela" ? "cha" : t.canal === "channelb" ? "chb" : "other"})`;
+    s += `<circle cx="${x}" cy="${y}" r="7" fill="${color}"><title>${esc(t.funcao)} · ${esc(t.canal)}</title></circle>
+          <text x="${x}" y="${y - 12}" text-anchor="middle">${esc(t.funcao)}</text>`;
+  });
+  return s + `</svg>`;
+}
+
+// ---- views -------------------------------------------------------------------
+const main = document.getElementById("main");
+let currentGtx = null, followNewest = true, currentCh = null, hideNoise = true, view = "gtx";
+
+function viewGtx() {
+  const ids = Object.keys(GTX).sort((a, b) => GTX[b][0].timestamp.localeCompare(GTX[a][0].timestamp));
+  if (!ids.length) { main.innerHTML = `<div class="card empty">Nenhuma GTX no ledger ainda. Rode <code>client swap</code> e gere o explorer de novo.</div>`; return; }
+  if (followNewest || !currentGtx || !GTX[currentGtx]) currentGtx = ids[0];
+  const steps = GTX[currentGtx], d = decisionOf(steps), t0 = new Date(steps[0].timestamp);
+  const dur = ((new Date(steps[steps.length - 1].timestamp) - t0) / 1000).toFixed(2);
+  main.innerHTML = `<div class="layout">
+    <div class="card gtx-list" role="listbox" aria-label="Transações globais">${ids.map(id => {
+      const dd = decisionOf(GTX[id]);
+      return `<div class="gtx-item" role="option" data-gtx="${esc(id)}" aria-selected="${id === currentGtx}">
+        <div><div class="id">${esc(id)}</div><div class="meta">${time(GTX[id][0].timestamp)} · ${GTX[id].length} tx</div></div>${badge(dd.decisao)}</div>`;
+    }).join("")}</div>
+    <div class="card">
+      <div class="gtx-head"><h2>${esc(currentGtx)}</h2>${badge(d.decisao)}
+        <span class="sub">${d.concluida ? "concluída" : "não concluída"} · ${steps.length} transações · ${dur}s · ${[...new Set(steps.map(s => s.canal))].map(chTag).join(" ")}</span></div>
+      <div class="lanes">${lanes(steps)}</div>
+      <ul class="steps">${steps.map(t => row(t, t0)).join("")}</ul>
+    </div></div>`;
+  main.querySelectorAll(".gtx-item").forEach(el => el.onclick = () => { currentGtx = el.dataset.gtx; followNewest = currentGtx === ids[0]; viewGtx(); });
+}
+
+function viewBlocks() {
+  if (!currentCh || !CHANNELS.includes(currentCh)) currentCh = CHANNELS[0];
+  const c = DATA.canais.find(c => c.nome === currentCh);
+  const blocks = [...c.blocos].reverse();
+  main.innerHTML = `<div class="toolbar">${CHANNELS.map(n =>
+      `<button class="pill-btn" data-ch="${esc(n)}" aria-selected="${n === currentCh}">${esc(n)}</button>`).join("")}
+    <label><input type="checkbox" id="noise" ${hideNoise ? "checked" : ""}> ocultar configuração e lifecycle</label></div>` +
+    blocks.map(b => {
+      const txs = b.txs.map(t => TXS.find(x => x.txId === t.txId && x.canal === currentCh) || t)
+        .filter(t => !hideNoise || !["config", "lifecycle"].includes(t.categoria));
+      if (!txs.length) return "";
+      const cats = [...new Set(txs.map(t => t.categoria))].map(k => `<span class="tag">${k}</span>`).join(" ");
+      return `<section class="card block"><div class="block-head"><span class="n">Bloco #${b.numero}</span>
+        <span class="t">${txs[0] ? esc(new Date(txs[0].timestamp).toLocaleString("pt-BR")) : ""}</span>
+        <span class="sub">${b.txs.length} tx</span> ${cats}
+        <span class="hash" title="hash dos dados / hash do bloco anterior">dados ${b.hashDados.slice(0, 16)}… · anterior ${b.hashAnterior ? b.hashAnterior.slice(0, 16) + "…" : "—"}</span></div>
+        <ul class="steps">${txs.map(t => row(t)).join("")}</ul></section>`;
+    }).join("");
+  main.querySelectorAll("[data-ch]").forEach(el => el.onclick = () => { currentCh = el.dataset.ch; viewBlocks(); });
+  document.getElementById("noise").onchange = e => { hideNoise = e.target.checked; viewBlocks(); };
+}
+
+const views = { gtx: viewGtx, blocks: viewBlocks };
+function render() {
+  // preserva linhas abertas e a rolagem ao redesenhar
+  const open = [...main.querySelectorAll("details[open]")].map(d => d.dataset.tx);
+  const y = window.scrollY;
+  views[view]();
+  open.forEach(k => { const d = main.querySelector(`details[data-tx="${CSS.escape(k)}"]`); if (d) d.open = true; });
+  window.scrollTo(0, y);
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.setAttribute("aria-selected", x === b));
+  view = b.dataset.view;
+  render();
+});
+document.getElementById("theme").onclick = () => {
+  const r = document.documentElement, dark = r.dataset.theme ? r.dataset.theme === "dark"
+    : matchMedia("(prefers-color-scheme: dark)").matches;
+  r.dataset.theme = dark ? "light" : "dark";
+};
+
+load(DATA);
+render();
+
+// Modo ao vivo: busca /data.json e redesenha quando o servidor tiver blocos novos.
+if (LIVE) {
+  let version = DATA.versao;
+  setInterval(async () => {
+    try {
+      const r = await fetch(`data.json?v=${version}`, { cache: "no-store" });
+      if (r.status === 204) return;            // nada novo
+      const d = await r.json();
+      if (d.versao === version) return;
+      version = d.versao;
+      load(d);
+      render();
+      document.body.classList.remove("offline");
+    } catch {
+      document.body.classList.add("offline");  // servidor parado
+    }
+  }, 1500);
+}
+</script>
+</body>
+</html>

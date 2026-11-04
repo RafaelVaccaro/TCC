@@ -15,8 +15,9 @@ public final class Main {
                 case "setup" -> Setup.run();
                 case "relayer" -> Relayer.run();
                 case "client" -> Client.run(rest);
+                case "explorer" -> Explorer.run(rest);
                 default -> {
-                    System.err.println("uso: mc2pc (setup | relayer | client <comando>)");
+                    System.err.println("uso: mc2pc (setup | relayer | client <comando> | explorer [arquivo.html])");
                     System.exit(1);
                 }
             }

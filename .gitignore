@@ -5,3 +5,4 @@ bin/
 builders/
 config/
 .cache/
+/explorer.html

@@ -40,36 +40,224 @@ scripts/      env.sh (topologia + helpers), network.sh (up/channels/deploy/setup
 common/       modelo (POJOs/JSON) + mc2pc.common.cc.Proof (verificação de provas) + testes
 txmanager/    chaincode da masterchain (TxManager.java)
 twopc/        chaincode das cadeias participantes (TwoPC.java) — o mesmo jar em channela e channelb
-app/          Setup, Relayer, Client (Fabric Gateway Java) — jar único mc2pc-app.jar
+app/          Setup, Relayer, Client, Explorer (Fabric Gateway Java) — jar único mc2pc-app.jar
 ```
 
 ## Como rodar
 
-Pré-requisitos: Docker e Java 21+. O Maven vem pelo wrapper (`./mvnw`, baixado em `~/.m2` na 1ª vez).
+Todos os comandos são executados a partir da raiz do projeto (`multichain-2pc/`).
+
+### 0. Pré-requisitos
+
+- Docker com Compose v2 e Java 21+ (o Maven vem pelo wrapper `./mvnw`, baixado em `~/.m2` na 1ª vez).
+- Binários do Fabric 2.5 (`peer`, `configtxgen`, `cryptogen`, `osnadmin`). Os scripts procuram em
+  `$FABRIC_BIN`, `./bin`, `../fabric-samples/bin` e no `PATH`. Para baixá-los dentro do projeto:
 
 ```bash
-./scripts/network.sh all          # up + channels + deploy + setup
+curl -sSL https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh | bash -s -- --fabric-version 2.5.16 binary
 ```
 
-Em um terminal, o relayer:
+```bash
+docker compose version && java -version
+```
+
+### 1. Limpar o ambiente
+
+Derruba containers, apaga volumes (ledgers), containers/imagens de chaincode, cripto e artefatos:
+
+```bash
+./scripts/network.sh down
+```
+
+```bash
+./mvnw -q clean
+```
+
+### 2. Subir a rede do zero
+
+Gera cripto, sobe os containers, cria os 3 canais, compila e instala os chaincodes e roda o setup
+(`RegisterChain`, `ConfigureCoordinator`, Alice = 500 e Bob = 200 tokens em A, imóvel 10 do Bob em B):
+
+```bash
+./scripts/network.sh all
+```
+
+As etapas também podem ser executadas separadamente: `up`, `channels`, `deploy`, `setup`.
+
+### 3. Terminais
+
+| Terminal | Comando | Papel |
+|---|---|---|
+| 1 | `./scripts/app.sh relayer` | conduz o protocolo (**rode apenas um**) |
+| 2 | `./scripts/app.sh explorer --serve` | visualização ao vivo em http://localhost:8080 (opcional) |
+| 3 | comandos `client` abaixo | dispara os cenários |
+
+> Dois relayers ao mesmo tempo não quebram a atomicidade (as funções são idempotentes e o Fabric
+> rejeita escritas conflitantes), mas geram transações duplicadas e `MVCC_READ_CONFLICT` no ledger.
+
+### 4. Cenários
+
+Use um `--gtx` novo a cada execução (repetir um id faz o `Begin` falhar com "GTX já existe").
+Os resultados esperados abaixo assumem a rede recém-criada e os cenários na ordem.
+
+#### Cenário 1 — COMMIT (troca normal)
+
+Alice cede 100 tokens na cadeia A; Bob cede o imóvel 10 na cadeia B:
+
+```bash
+./scripts/app.sh client swap --gtx c1
+```
+
+Esperado: `Completed COMMIT`; Alice = 400, Bob = 300, imóvel 10 de Alice, nenhuma trava.
+
+#### Cenário 2 — ABORT, as duas cadeias votam NÃO
+
+Alice tenta ceder 1000 tokens (tem 400) e o imóvel 10 já não é do Bob:
+
+```bash
+./scripts/app.sh client swap --gtx c2 --tokens 1000
+```
+
+Esperado: duas SUBs `RECUSADA`, `Completed ABORT`, nenhum estado alterado. O motivo de cada
+recusa aparece no log do relayer e no `STAGE` (`client status --gtx c2`).
+
+#### Cenário 3 — ABORT misto (A recusa, B prepara e trava)
+
+Crie o imóvel 20 do Bob (como Admin da OrgCoord):
+
+```bash
+source scripts/env.sh && setOrg orgcoord && peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C channelb -n twopc $(peerArgs channelb) --waitForEvent -c '{"Args":["CreateImovel","20","Bob"]}'
+```
+
+Rode a troca — A recusa por saldo, B prepara e trava `IMOVEL~20`:
+
+```bash
+./scripts/app.sh client swap --gtx c3 --tokens 1000 --imovel 20
+```
+
+Confira que o Abort liberou a trava e o imóvel continua do Bob (`"dono":"Bob"`, `"locked":false`):
+
+```bash
+source scripts/env.sh && setOrg orgcoord && peer chaincode query -C channelb -n twopc -c '{"Args":["GetImovel","20"]}' && peer chaincode query -C channelb -n twopc -c '{"Args":["IsLocked","IMOVEL~20"]}'
+```
+
+#### Cenário 4 — Timeout (GTX travada em PENDING)
+
+1. **Pare o relayer** (Ctrl+C no terminal 1) — sem ele ninguém executa o Prepare.
+2. Inicie uma troca com prazo de 15 s (o cliente desiste de acompanhar após ~45 s):
+
+```bash
+./scripts/app.sh client swap --gtx t1 --prazo 15
+```
+
+3. Confira que ficou presa (`PENDING`, STAGE `NONE` nas duas cadeias):
+
+```bash
+./scripts/app.sh client status --gtx t1
+```
+
+4. **Suba o relayer de novo** no terminal 1 e dispare o timeout:
 
 ```bash
 ./scripts/app.sh relayer
 ```
 
-Em outro, o cliente:
-
 ```bash
-./scripts/app.sh client swap --gtx 123                 # Alice 100 tokens (A) <-> imóvel 10 do Bob (B)
-./scripts/app.sh client state                          # saldos e imóvel
-./scripts/app.sh client status --gtx 123               # GTX, SUBs e STAGEs
-./scripts/app.sh client swap --tokens 1000             # voto NÃO (saldo insuficiente) -> ABORT
-./scripts/app.sh client timeout --gtx <id>             # ABORT por prazo vencido
-./scripts/app.sh client prove masterchain txmanager GetDecision <id>   # gera uma prova (base64)
+./scripts/app.sh client timeout --gtx t1
 ```
 
-Após alterar um chaincode: `./scripts/network.sh deploy` (incrementa a sequência automaticamente).
-Para destruir tudo: `./scripts/network.sh down`.
+5. Após alguns segundos, confira: `decisao: ABORT`, `concluida: true` e STAGE `ABORTED` nas duas
+   cadeias, mesmo sem ter havido Prepare (tombstone que recusa um Prepare atrasado):
+
+```bash
+./scripts/app.sh client status --gtx t1
+```
+
+#### Cenário 5 — Segurança: provas forjadas são rejeitadas on-chain
+
+Todos estes comandos **devem falhar** com a mensagem indicada.
+
+Prova que não é um envelope válido → `protobuf inválido`:
+
+```bash
+source scripts/env.sh && setOrg orgcoord && peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C channelb -n twopc $(peerArgs channelb) -c '{"Args":["Commit","c3","AAAA"]}'
+```
+
+Prova verdadeira de ABORT usada para pedir Commit → `decisão provada ... é ABORT, esperado COMMIT`:
+
+```bash
+source scripts/env.sh && setOrg orgcoord && P=$(./scripts/app.sh client prove masterchain txmanager GetDecision c3) && peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C channelb -n twopc $(peerArgs channelb) -c "{\"Args\":[\"Commit\",\"c3\",\"$P\"]}"
+```
+
+Prova de uma GTX reaproveitada em outra → `argumentos [c3], esperados [c1]`:
+
+```bash
+source scripts/env.sh && setOrg orgcoord && P=$(./scripts/app.sh client prove masterchain txmanager GetDecision c3) && peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C channelb -n twopc $(peerArgs channelb) -c "{\"Args\":[\"Abort\",\"c1\",\"$P\"]}"
+```
+
+Prova de outro canal (channela no lugar da masterchain) → `canal 'channela', esperado 'masterchain'`:
+
+```bash
+source scripts/env.sh && setOrg orgcoord && Q=$(./scripts/app.sh client prove channela twopc GetStage c1) && peer chaincode invoke -o localhost:7050 --ordererTLSHostnameOverride orderer.example.com --tls --cafile "$ORDERER_CA" -C channelb -n twopc $(peerArgs channelb) -c "{\"Args\":[\"Commit\",\"c1\",\"$Q\"]}"
+```
+
+### 5. Explorer (visualização do ledger)
+
+Ao vivo — abra http://localhost:8080 no navegador:
+
+```bash
+./scripts/app.sh explorer --serve
+```
+
+Em outra porta:
+
+```bash
+./scripts/app.sh explorer --serve --port 9090
+```
+
+Retrato estático (gera `explorer.html` na raiz do projeto; gere de novo para ver transações novas):
+
+```bash
+./scripts/app.sh explorer
+```
+
+```bash
+xdg-open explorer.html
+```
+
+O que a página mostra:
+
+- **Transações globais** — lista de GTX com a decisão; para a GTX escolhida, um diagrama de raias
+  (masterchain, channela, channelb) com cada transação como um ponto e cada prova como uma seta
+  tracejada vinda da cadeia que a emitiu, e a linha do tempo fase a fase (1 · Begin → 6 · Conclusão).
+  Clicando em uma linha: txId, bloco, criador, endossantes, argumentos, escritas/leituras, evento e
+  resposta. As provas aparecem decodificadas (ex.: "Prova P1 · masterchain txmanager.GetSub(c1, A),
+  endossada por OrgCoordMSP, OrgBMSP"), com o resultado provado.
+- **Blocos por canal** — cada bloco com hash e hash anterior, transações classificadas como
+  `2pc`, `setup`, `config` ou `lifecycle` (as duas últimas ocultas por padrão).
+
+No modo `--serve`, o servidor consulta a altura dos canais a cada segundo e busca só os blocos
+novos; a página se atualiza sozinha, segue a GTX mais recente (até você escolher outra) e mantém
+abertas as linhas expandidas. O indicador "ao vivo" fica vermelho se o servidor cair.
+O servidor escuta apenas em localhost.
+
+### 6. Comandos úteis
+
+| Comando | Para quê |
+|---|---|
+| `./scripts/app.sh client state` | saldos de Alice/Bob (A), imóvel 10 (B) e travas |
+| `./scripts/app.sh client status --gtx <id>` | GTX, SUBs e STAGE em cada cadeia |
+| `./scripts/app.sh client prove <canal> <cc> <função> [args]` | gera uma prova (base64) de qualquer consulta |
+| `./mvnw -q -pl common test` | teste unitário da verificação de provas |
+| `./scripts/network.sh deploy` | recompila e reinstala os chaincodes (sequência + 1) |
+| `docker logs -f peer0.orgcoord.example.com` | logs de um peer |
+| `docker ps --format '{{.Names}}' \| grep dev-peer` | containers dos chaincodes |
+
+Opções do `client swap`: `--gtx ID`, `--tokens N` (padrão 100), `--imovel ID` (padrão 10),
+`--prazo SEGUNDOS` (padrão 120).
+
+> Depois de recompilar (`deploy` ou `./mvnw install`), **reinicie o relayer e o explorer**: o jar
+> é substituído e um processo Java já em execução pode falhar ao carregar classes novas.
 
 ## Mapeamento diagrama → código
 
