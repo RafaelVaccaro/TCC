@@ -1,0 +1,47 @@
+# Material criptográfico (cryptogen) para o cenário base do 2PC multichain.
+#
+#   OrgCoord -> coordenadora: participa de TODOS os canais (masterchain + cadeias)
+#   OrgA     -> cadeia A (channela)  — Alice = User1@orga.example.com
+#   OrgB     -> cadeia B (channelb)  — Bob   = User1@orgb.example.com
+#
+# Para N cadeias: adicione OrgC, OrgD... aqui, em configtx.yaml e em compose.yaml.
+
+OrdererOrgs:
+  - Name: Orderer
+    Domain: example.com
+    EnableNodeOUs: true
+    Specs:
+      - Hostname: orderer
+        SANS:
+          - localhost
+
+PeerOrgs:
+  - Name: OrgCoord
+    Domain: orgcoord.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+      SANS:
+        - localhost
+    Users:
+      Count: 1
+
+  - Name: OrgA
+    Domain: orga.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+      SANS:
+        - localhost
+    Users:
+      Count: 1
+
+  - Name: OrgB
+    Domain: orgb.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+      SANS:
+        - localhost
+    Users:
+      Count: 1

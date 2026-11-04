@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>mc2pc</groupId>
+    <artifactId>mc2pc-parent</artifactId>
+    <version>1.0.0</version>
+  </parent>
+  <artifactId>twopc</artifactId>
+
+  <!--
+    Chaincode empacotado como jar pré-compilado: a javaenv coloca este jar no classpath
+    junto com /root/chaincode-java/lib (shim, protos, gson) e inicia o ContractRouter.
+    Por isso só o módulo common é embutido (shade); o resto é provided.
+  -->
+  <dependencies>
+    <dependency>
+      <groupId>mc2pc</groupId>
+      <artifactId>common</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.hyperledger.fabric-chaincode-java</groupId>
+      <artifactId>fabric-chaincode-shim</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.hyperledger.fabric</groupId>
+      <artifactId>fabric-protos</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.code.gson</groupId>
+      <artifactId>gson</artifactId>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>twopc</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <artifactSet>
+                <includes><include>mc2pc:common</include></includes>
+              </artifactSet>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

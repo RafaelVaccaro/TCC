@@ -1,0 +1,140 @@
+# Rede base: 1 orderer (raft) + peer0 de cada org. Imagens fixadas em 2.5 para
+# casar com os binários CLI do Fabric (v2.5.x).
+
+name: mc2pc
+
+volumes:
+  orderer.example.com:
+  peer0.orgcoord.example.com:
+  peer0.orga.example.com:
+  peer0.orgb.example.com:
+
+networks:
+  fabric:
+    name: fabric_2pc
+
+x-peer: &peer
+  image: hyperledger/fabric-peer:2.5
+  working_dir: /root
+  command: peer node start
+  networks:
+    - fabric
+
+x-peer-env: &peer-env
+  FABRIC_CFG_PATH: /etc/hyperledger/peercfg
+  FABRIC_LOGGING_SPEC: INFO
+  CORE_PEER_TLS_ENABLED: "true"
+  CORE_PEER_PROFILE_ENABLED: "false"
+  CORE_PEER_TLS_CERT_FILE: /etc/hyperledger/fabric/tls/server.crt
+  CORE_PEER_TLS_KEY_FILE: /etc/hyperledger/fabric/tls/server.key
+  CORE_PEER_TLS_ROOTCERT_FILE: /etc/hyperledger/fabric/tls/ca.crt
+  CORE_PEER_MSPCONFIGPATH: /etc/hyperledger/fabric/msp
+  CORE_METRICS_PROVIDER: prometheus
+  CORE_CHAINCODE_EXECUTETIMEOUT: 300s
+  # Build/execução de chaincode Go via Docker (ccenv/baseos 2.5)
+  CORE_VM_ENDPOINT: unix:///host/var/run/docker.sock
+  CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE: fabric_2pc
+
+services:
+  orderer.example.com:
+    container_name: orderer.example.com
+    image: hyperledger/fabric-orderer:2.5
+    environment:
+      - FABRIC_LOGGING_SPEC=INFO
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_LISTENPORT=7050
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+      - ORDERER_GENERAL_LOCALMSPDIR=/var/hyperledger/orderer/msp
+      - ORDERER_GENERAL_TLS_ENABLED=true
+      - ORDERER_GENERAL_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_CLUSTER_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_BOOTSTRAPMETHOD=none
+      - ORDERER_CHANNELPARTICIPATION_ENABLED=true
+      - ORDERER_ADMIN_TLS_ENABLED=true
+      - ORDERER_ADMIN_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_ADMIN_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_ADMIN_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_TLS_CLIENTROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_LISTENADDRESS=0.0.0.0:7053
+      - ORDERER_OPERATIONS_LISTENADDRESS=orderer.example.com:9443
+    working_dir: /root
+    command: orderer
+    volumes:
+      - ./organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp:/var/hyperledger/orderer/msp
+      - ./organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/:/var/hyperledger/orderer/tls
+      - orderer.example.com:/var/hyperledger/production/orderer
+    ports:
+      - 7050:7050
+      - 7053:7053
+    networks:
+      - fabric
+
+  peer0.orgcoord.example.com:
+    <<: *peer
+    container_name: peer0.orgcoord.example.com
+    environment:
+      <<: *peer-env
+      CORE_PEER_ID: peer0.orgcoord.example.com
+      CORE_PEER_ADDRESS: peer0.orgcoord.example.com:7051
+      CORE_PEER_LISTENADDRESS: 0.0.0.0:7051
+      CORE_PEER_CHAINCODEADDRESS: peer0.orgcoord.example.com:7052
+      CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:7052
+      CORE_PEER_GOSSIP_BOOTSTRAP: peer0.orgcoord.example.com:7051
+      CORE_PEER_GOSSIP_EXTERNALENDPOINT: peer0.orgcoord.example.com:7051
+      CORE_PEER_LOCALMSPID: OrgCoordMSP
+      CORE_OPERATIONS_LISTENADDRESS: peer0.orgcoord.example.com:9444
+    volumes:
+      - ./organizations/peerOrganizations/orgcoord.example.com/peers/peer0.orgcoord.example.com:/etc/hyperledger/fabric
+      - ./peercfg:/etc/hyperledger/peercfg
+      - peer0.orgcoord.example.com:/var/hyperledger/production
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/host/var/run/docker.sock
+    ports:
+      - 7051:7051
+
+  peer0.orga.example.com:
+    <<: *peer
+    container_name: peer0.orga.example.com
+    environment:
+      <<: *peer-env
+      CORE_PEER_ID: peer0.orga.example.com
+      CORE_PEER_ADDRESS: peer0.orga.example.com:9051
+      CORE_PEER_LISTENADDRESS: 0.0.0.0:9051
+      CORE_PEER_CHAINCODEADDRESS: peer0.orga.example.com:9052
+      CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:9052
+      CORE_PEER_GOSSIP_BOOTSTRAP: peer0.orga.example.com:9051
+      CORE_PEER_GOSSIP_EXTERNALENDPOINT: peer0.orga.example.com:9051
+      CORE_PEER_LOCALMSPID: OrgAMSP
+      CORE_OPERATIONS_LISTENADDRESS: peer0.orga.example.com:9445
+    volumes:
+      - ./organizations/peerOrganizations/orga.example.com/peers/peer0.orga.example.com:/etc/hyperledger/fabric
+      - ./peercfg:/etc/hyperledger/peercfg
+      - peer0.orga.example.com:/var/hyperledger/production
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/host/var/run/docker.sock
+    ports:
+      - 9051:9051
+
+  peer0.orgb.example.com:
+    <<: *peer
+    container_name: peer0.orgb.example.com
+    environment:
+      <<: *peer-env
+      CORE_PEER_ID: peer0.orgb.example.com
+      CORE_PEER_ADDRESS: peer0.orgb.example.com:11051
+      CORE_PEER_LISTENADDRESS: 0.0.0.0:11051
+      CORE_PEER_CHAINCODEADDRESS: peer0.orgb.example.com:11052
+      CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:11052
+      CORE_PEER_GOSSIP_BOOTSTRAP: peer0.orgb.example.com:11051
+      CORE_PEER_GOSSIP_EXTERNALENDPOINT: peer0.orgb.example.com:11051
+      CORE_PEER_LOCALMSPID: OrgBMSP
+      CORE_OPERATIONS_LISTENADDRESS: peer0.orgb.example.com:9446
+    volumes:
+      - ./organizations/peerOrganizations/orgb.example.com/peers/peer0.orgb.example.com:/etc/hyperledger/fabric
+      - ./peercfg:/etc/hyperledger/peercfg
+      - peer0.orgb.example.com:/var/hyperledger/production
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/host/var/run/docker.sock
+    ports:
+      - 11051:11051

@@ -1,0 +1,198 @@
+# Definição dos canais (configtxgen). Cada perfil gera o bloco gênese de um canal,
+# que é entregue ao orderer via channel participation API (osnadmin) — sem system channel.
+#
+#   masterchain : OrgCoord + OrgA + OrgB   (chaincode txmanager)
+#   channela    : OrgCoord + OrgA          (chaincode twopc — cadeia A)
+#   channelb    : OrgCoord + OrgB          (chaincode twopc — cadeia B)
+
+Organizations:
+  - &OrdererOrg
+    Name: OrdererOrg
+    ID: OrdererMSP
+    MSPDir: organizations/ordererOrganizations/example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrdererMSP.admin')"
+    OrdererEndpoints:
+      - orderer.example.com:7050
+
+  - &OrgCoord
+    Name: OrgCoordMSP
+    ID: OrgCoordMSP
+    MSPDir: organizations/peerOrganizations/orgcoord.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrgCoordMSP.admin', 'OrgCoordMSP.peer', 'OrgCoordMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrgCoordMSP.admin', 'OrgCoordMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrgCoordMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('OrgCoordMSP.peer')"
+    # Anchor peers no gênese: necessários para discovery/gateway entre orgs.
+    AnchorPeers:
+      - Host: peer0.orgcoord.example.com
+        Port: 7051
+
+  - &OrgA
+    Name: OrgAMSP
+    ID: OrgAMSP
+    MSPDir: organizations/peerOrganizations/orga.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrgAMSP.admin', 'OrgAMSP.peer', 'OrgAMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrgAMSP.admin', 'OrgAMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrgAMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('OrgAMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.orga.example.com
+        Port: 9051
+
+  - &OrgB
+    Name: OrgBMSP
+    ID: OrgBMSP
+    MSPDir: organizations/peerOrganizations/orgb.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrgBMSP.admin', 'OrgBMSP.peer', 'OrgBMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrgBMSP.admin', 'OrgBMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrgBMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('OrgBMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.orgb.example.com
+        Port: 11051
+
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+  Orderer: &OrdererCapabilities
+    V2_0: true
+  Application: &ApplicationCapabilities
+    V2_5: true
+
+Application: &ApplicationDefaults
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    LifecycleEndorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+    # Política de endosso padrão dos chaincodes. Na masterchain (3 orgs) = 2 de 3;
+    # em channela/channelb (2 orgs) = 2 de 2.
+    Endorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+  Capabilities:
+    <<: *ApplicationCapabilities
+
+Orderer: &OrdererDefaults
+  OrdererType: etcdraft
+  Addresses:
+    - orderer.example.com:7050
+  EtcdRaft:
+    Consenters:
+      - Host: orderer.example.com
+        Port: 7050
+        ClientTLSCert: organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+        ServerTLSCert: organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+  BatchTimeout: 1s
+  BatchSize:
+    MaxMessageCount: 10
+    AbsoluteMaxBytes: 99 MB
+    PreferredMaxBytes: 512 KB
+  Organizations:
+    - *OrdererOrg
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    BlockValidation:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+  Capabilities:
+    <<: *OrdererCapabilities
+
+Channel: &ChannelDefaults
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+  Capabilities:
+    <<: *ChannelCapabilities
+
+Profiles:
+  MasterChain:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *OrgCoord
+        - *OrgA
+        - *OrgB
+
+  ChannelA:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *OrgCoord
+        - *OrgA
+
+  ChannelB:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *OrgCoord
+        - *OrgB
